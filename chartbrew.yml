@@ -1,0 +1,164 @@
+---
+- name: Setup LAMP Stack
+  hosts: 15.207.16.50
+  become: yes
+  tasks:
+    - name: Update apt 
+      command: "apt update"
+
+    - name: Upgrade apt 
+      command: "apt upgrade -y"
+
+    - name: Check if Apache2 is already installed
+      stat:
+        path: /etc/apache2/apache2.conf  # Replace with the actual path to an Apache2 configuration file
+      register: apache2_installed
+
+    - name: Install Apache2
+      apt:
+        name: apache2
+        state: present
+      when: apache2_installed.stat.exists == false
+
+    - name: Start Apache2 service
+      service:
+        name: apache2
+        state: started
+      when: apache2_installed.stat.exists == false
+
+    - name: Replace 127.0.0.1 with 0.0.0.0 in /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127.0.0.1'
+        line: '0.0.0.0 localhost'
+    
+    - name: Restart Apache2 service
+      service:
+        name: apache2
+        state: restarted
+
+    # - name: Install Apache2
+    #   command: "apt install -y apache2"
+    
+    # # - name: Start and enable Apache2
+    # #   command: "systemctl restart apache2"
+
+    - name: Install pip
+      apt:
+        name: python3-pip
+        state: present
+
+    - name: Install PyMySQL
+      pip:
+        name: pymysql
+        state: present
+
+    - name: Install MySQL server
+      command: "apt install -y mysql-server"
+    
+    - name: Secure MySQL installation
+      command: "sudo systemctl start mysql.service"
+
+    - name: Create mysql database
+      mysql_db:
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        name: chartbrewdev
+        state: present
+
+    - name: user setup in mysql
+      mysql_user:
+       user: admin
+       password: 1234
+       priv: '*.*:ALL,GRANT'
+       login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Check if Node.js is already installed
+      command: node --version
+      register: node_version
+      ignore_errors: true
+      changed_when: false
+
+    - name: Check if PM2 is already installed
+      command: pm2 --version
+      register: pm2_version
+      ignore_errors: true
+      changed_when: false
+
+    - name: Download and run Node.js setup script
+      shell: curl -sL https://deb.nodesource.com/setup_16.x -o /tmp/nodesource_setup.sh
+      when: node_version.rc != 0  # Only run if Node.js is not installed
+
+    - name: Bash the Node.js setup script
+      shell: sudo bash /tmp/nodesource_setup.sh
+      when: node_version.rc != 0  # Only run if Node.js is not installed
+
+    - name: Install Node.js
+      command: sudo apt install nodejs
+      when: node_version.rc != 0  # Only run if Node.js is not installed
+
+    - name: Install PM2
+      command: npm install -g pm2
+      when: pm2_version.rc != 0  # Only run if PM2 is not installed
+    
+    # THIS IS TO CLONE PROJECT FROM GITHUB 
+
+    - name: Check if the project chartbrew exists
+      stat:
+        path: /home/ubuntu/chartbrew  # Replace with the actual path to your project directory
+      register: chartbrew
+
+    - name: Clone the project
+      command: git clone https://github.com/AshishBharti783/chartbrew.git
+      args:
+        chdir: /home/ubuntu/  # Replace with the actual path to the parent directory of your project
+      ignore_errors: yes  # Ignore errors if the directory already exists
+      failed_when: false  # Mark the task as successful even if it fails
+      when: chartbrew.stat.exists == false
+
+    # FILE TRANSFER FROM LOCAL TO SERVER
+
+    # - name: Synchronize directory from local to server
+    #   ansible.builtin.synchronize:
+    #     src: /home/ashish/chartbrew  # Note the trailing slash to copy the directory contents
+    #     dest: /home/ubuntu/  # Replace with the path to your remote directory
+    #     archive: yes  # Ensures that the directory structure is preserved
+
+    - name: Change ownership of /home/ubuntu/chartbrew
+      command: chown -R ubuntu:ubuntu /home/ubuntu/chartbrew 
+
+    - name: Change directory to the Chartbrew project
+      shell: cd
+      args:
+        chdir: /home/ubuntu/chartbrew
+
+    - name: Run npm setup
+      become_user: ubuntu
+      shell: npm run setup
+      args:
+        chdir: /home/ubuntu/chartbrew/
+
+    - name: Change directory to backend server
+      shell: cd
+      args:
+        chdir: /home/ubuntu/chartbrew/server/
+
+    - name: Run npm setup
+      become_user: ubuntu
+      shell: npm install
+      args:
+        chdir: /home/ubuntu/chartbrew/server/
+
+    - name: Run NODE_ENV=development pm2 start index.js
+      become_user: ubuntu
+      shell: NODE_ENV=development pm2 start index.js --name "chartbrew-server"
+      args:
+        chdir: /home/ubuntu/chartbrew/server/
+
+    - name: Run build.sh script
+      become_user: ubuntu
+      shell: cd /home/ubuntu/chartbrew/client/dist && ./build.sh  
+
+    - name: Run Frontend by using command pm2 start app.config.json
+      shell: pm2 start app.config.json
+      args:
+        chdir: /home/ubuntu/chartbrew/client/dist/
