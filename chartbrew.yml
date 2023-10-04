@@ -1,6 +1,6 @@
 ---
 - name: Setup LAMP Stack
-  hosts: 15.207.16.50
+  hosts: 15.207.16.50   #ip od server
   become: yes
   tasks:
     - name: Update apt 
